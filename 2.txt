@@ -1,0 +1,206 @@
+using System.Data;
+using Npgsql;
+
+namespace ShoesStoreExam;
+
+public static class Db
+{
+    private const string ConnectionString =
+        "Host=localhost;Port=5432;Database=shoes_store;Username=postgres;Password=pos234";
+
+    public static NpgsqlConnection GetConnection() => new(ConnectionString);
+
+    public static DataTable GetData(string sql)
+    {
+        using var conn = GetConnection();
+        using var cmd = new NpgsqlCommand(sql, conn);
+        using var adapter = new NpgsqlDataAdapter(cmd);
+
+        var table = new DataTable();
+        adapter.Fill(table);
+        return table;
+    }
+}
+
+using System;
+using System.Windows.Forms;
+using Npgsql;
+
+namespace ShoesStoreExam;
+
+public partial class LoginForm : Form
+{
+    public LoginForm()
+    {
+        InitializeComponent();
+    }
+
+    private void btnGuest_Click(object sender, EventArgs e)
+    {
+        var shopForm = new ShopForm(isGuest: true);
+        shopForm.Show();
+        Hide();
+    }
+
+    // Для входа клиента
+    private void btnLogin_Click(object sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(txtLogin.Text) ||
+            string.IsNullOrWhiteSpace(txtPassword.Text))
+        {
+            MessageBox.Show("Введите логин и пароль");
+            return;
+        }
+
+        const string Sql =
+            "SELECT full_name FROM users " +
+            "WHERE login=@login AND password=@password AND role='Авторизированный клиент'";
+
+        try
+        {
+            using var conn = Db.GetConnection();
+            conn.Open();
+
+            using var cmd = new NpgsqlCommand(Sql, conn);
+            cmd.Parameters.AddWithValue("@login", txtLogin.Text);
+            cmd.Parameters.AddWithValue("@password", txtPassword.Text);
+
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+            {
+                MessageBox.Show("Неверные данные");
+                return;
+            }
+
+            var fullName = reader["full_name"]?.ToString() ?? string.Empty;
+            var shopForm = new ShopForm(isGuest: false, fullName);
+            shopForm.Show();
+            Hide();
+        }
+        catch
+        {
+            MessageBox.Show("Ошибка подключения");
+        }
+    }
+
+    // Проверка подключения к БД
+    private void btnTestDb_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            using var conn = Db.GetConnection();
+            conn.Open();
+            MessageBox.Show("Подключено");
+        }
+        catch
+        {
+            MessageBox.Show("Ошибка подключения");
+        }
+    }
+}
+
+using System;
+using System.Data;
+using System.Windows.Forms;
+using Npgsql;
+
+namespace ShoesStoreExam;
+
+public partial class ShopForm : Form
+{
+    private bool _isGuest;
+    private string _currentUserName;
+
+    public ShopForm(bool isGuest, string fullName = "")
+    {
+        InitializeComponent();
+        //LoadProducts();
+
+        _isGuest = isGuest;
+        _currentUserName = isGuest ? "Гость" : fullName;
+
+        lblCurrentUser.Text = $"Выполнен вход: {_currentUserName}";
+
+        if (isGuest)
+        {
+            btnBuy.Enabled = false;
+        }
+
+        LoadProducts();
+    }
+
+    private void LoadProducts()
+    {
+        const string Sql =
+            "SELECT article, product_name, unit, price, supplier, manufacturer, category, discount, stock_quantity, description, photo FROM products";
+
+        try
+        {
+            using var conn = Db.GetConnection();
+            using var adapter = new NpgsqlDataAdapter(Sql, conn);
+
+            var table = new DataTable();
+            adapter.Fill(table);
+
+            dgvProducts.AutoGenerateColumns = true;
+            dgvProducts.DataSource = table;
+        }
+        catch
+        {
+            MessageBox.Show("Ошибка при загрузке товаров");
+        }
+    }
+
+    private void btnBuy_Click_1(object sender, EventArgs e)
+    {
+        if (dgvProducts.CurrentRow?.Cells["article"].Value is not { } articleValue)
+        {
+            return;
+        }
+
+        var article = articleValue.ToString();
+        if (string.IsNullOrEmpty(article))
+        {
+            return;
+        }
+
+        try
+        {
+            using var conn = Db.GetConnection();
+            conn.Open();
+
+            const string Sql =
+                "UPDATE products " +
+                "SET stock_quantity = stock_quantity - 1 " +
+                "WHERE article = @article AND stock_quantity > 0";
+
+            using var cmd = new NpgsqlCommand(Sql, conn);
+            cmd.Parameters.AddWithValue("@article", article);
+
+            var rows = cmd.ExecuteNonQuery();
+
+            if (rows > 0)
+            {
+                MessageBox.Show("Товар куплен");
+                LoadProducts();
+            }
+            else
+            {
+                MessageBox.Show("Товара нет в наличии");
+            }
+        }
+        catch
+        {
+            MessageBox.Show("Ошибка при покупке");
+        }
+    }
+
+    // Переход обратно
+    private void btnExit_Click(object sender, EventArgs e)
+    {
+        Close();
+
+        var loginForm = Application.OpenForms["LoginForm"];
+        loginForm?.Show();
+    }
+}
